@@ -9,6 +9,11 @@
 
 ## dbt-core 1.0.1 (January 03, 2022)
 
+## dbt-core 1.0.1rc2(TBD)
+
+### Fixes
+- Switch to using mashumaro for logging serialization ([#4504](https://github.com/dbt-labs/dbt-core/issues/4504), [#4505](https://github.com/dbt-labs/dbt-core/pull/4505))
+
 ## dbt-core 1.0.1rc1 (December 20, 2021)
 
 ### Fixes

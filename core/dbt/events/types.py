@@ -1,19 +1,12 @@
-import argparse
 from dataclasses import dataclass
-from dbt.adapters.reference_keys import _make_key, _ReferenceKey
-from dbt.events.stubs import (
-    _CachedRelation,
-    BaseRelation,
-    ParsedHookNode,
-    ParsedModelNode,
-    RunResult
-)
+from dbt.adapters.reference_keys import _ReferenceKey
 from dbt import ui
 from dbt.events.base_types import (
     Event, NoFile, DebugLevel, InfoLevel, WarnLevel, ErrorLevel, ShowException,
     NodeInfo, Cache
 )
 from dbt.events.format import format_fancy_output_line, pluralize
+from dbt.events.serialization import dbtClassEventMixin
 from dbt.node_types import NodeType
 from typing import Any, Dict, List, Optional, Set, Tuple, TypeVar
 
@@ -49,7 +42,7 @@ T_Event = TypeVar('T_Event', bound=Event)
 # https://github.com/python/mypy/issues/5374
 
 @dataclass  # type: ignore
-class AdapterEventBase(Event):
+class AdapterEventBase(dbtClassEventMixin, Event):
     name: str
     base_msg: str
     args: Tuple[Any, ...]
@@ -78,25 +71,21 @@ class AdapterEventBase(Event):
 @dataclass
 class AdapterEventDebug(DebugLevel, AdapterEventBase, ShowException):
     code: str = "E001"
-    pass
 
 
 @dataclass
 class AdapterEventInfo(InfoLevel, AdapterEventBase, ShowException):
     code: str = "E002"
-    pass
 
 
 @dataclass
 class AdapterEventWarning(WarnLevel, AdapterEventBase, ShowException):
     code: str = "E003"
-    pass
 
 
 @dataclass
 class AdapterEventError(ErrorLevel, AdapterEventBase, ShowException):
     code: str = "E004"
-    pass
 
 
 @dataclass
@@ -113,7 +102,7 @@ class MainEncounteredError(ErrorLevel, NoFile):
     code: str = "Z002"
 
     def message(self) -> str:
-        return f"Encountered an error:\n{str(self.e)}"
+        return f"Encountered an error:\n{self.e}"
 
 
 @dataclass
@@ -136,15 +125,11 @@ class MainReportVersion(InfoLevel):
 
 @dataclass
 class MainReportArgs(DebugLevel):
-    args: argparse.Namespace
+    args: Dict[str, str]
     code: str = "A002"
 
     def message(self):
         return f"running dbt with arguments {str(self.args)}"
-
-    @classmethod
-    def asdict(cls, data: list) -> dict:
-        return dict((k, str(v)) for k, v in data)
 
 
 @dataclass
@@ -382,16 +367,15 @@ class SystemReportReturnCode(DebugLevel):
 
 @dataclass
 class SelectorReportInvalidSelector(InfoLevel):
-    selector_methods: dict
+    valid_selectors: str
     spec_method: str
     raw_spec: str
     code: str = "M010"
 
     def message(self) -> str:
-        valid_selectors = ", ".join(self.selector_methods)
         return (
             f"The '{self.spec_method}' selector specified in {self.raw_spec} is "
-            f"invalid. Must be one of [{valid_selectors}]"
+            f"invalid. Must be one of [{self.valid_selectors}]"
         )
 
 
@@ -512,14 +496,6 @@ class ListRelations(DebugLevel):
     def message(self) -> str:
         return f"with database={self.database}, schema={self.schema}, relations={self.relations}"
 
-    @classmethod
-    def asdict(cls, data: list) -> dict:
-        d = dict()
-        for k, v in data:
-            if type(v) == list:
-                d[k] = [str(x) for x in v]
-        return d
-
 
 @dataclass
 class ConnectionUsed(DebugLevel):
@@ -544,7 +520,7 @@ class SQLQuery(DebugLevel):
 @dataclass
 class SQLQueryStatus(DebugLevel):
     status: str
-    elapsed: float
+    elapsed: Optional[float]
     code: str = "E017"
 
     def message(self) -> str:
@@ -564,7 +540,7 @@ class SQLCommit(DebugLevel):
 class ColTypeChange(DebugLevel):
     orig_type: str
     new_type: str
-    table: str
+    table: _ReferenceKey
     code: str = "E019"
 
     def message(self) -> str:
@@ -587,10 +563,6 @@ class SchemaDrop(DebugLevel):
 
     def message(self) -> str:
         return f'Dropping schema "{self.relation}".'
-
-    @classmethod
-    def asdict(cls, data: list) -> dict:
-        return dict((k, str(v)) for k, v in data)
 
 
 # TODO pretty sure this is only ever called in dead code
@@ -645,16 +617,6 @@ class DropCascade(DebugLevel, Cache):
 
     def message(self) -> str:
         return f"drop {self.dropped} is cascading to {self.consequences}"
-
-    @classmethod
-    def asdict(cls, data: list) -> dict:
-        d = dict()
-        for k, v in data:
-            if isinstance(v, list):
-                d[k] = [str(x) for x in v]
-            else:
-                d[k] = str(v)  # type: ignore
-        return d
 
 
 @dataclass
@@ -739,15 +701,11 @@ class DumpAfterRenameSchema(DebugLevel, Cache):
 
 @dataclass
 class AdapterImportError(InfoLevel):
-    exc: ModuleNotFoundError
+    exc: Exception
     code: str = "E035"
 
     def message(self) -> str:
         return f"Error importing adapter: {self.exc}"
-
-    @classmethod
-    def asdict(cls, data: list) -> dict:
-        return dict((k, str(v)) for k, v in data)
 
 
 @dataclass
@@ -1325,7 +1283,7 @@ class PrintDebugStackTrace(ShowException, DebugLevel):
 class GenericExceptionOnRun(ErrorLevel):
     build_path: Optional[str]
     unique_id: str
-    exc: str  # TODO: make this the actual exception once we have a better searilization strategy
+    exc: Exception
     code: str = "W004"
 
     def message(self) -> str:
@@ -1362,7 +1320,6 @@ class CheckCleanPath(InfoLevel, NoFile):
 @dataclass
 class ConfirmCleanPath(InfoLevel, NoFile):
     path: str
-
     code: str = "Z013"
 
     def message(self) -> str:
@@ -1592,7 +1549,7 @@ class SeedHeader(InfoLevel):
 
 
 @dataclass
-class SeedHeaderSeperator(InfoLevel):
+class SeedHeaderSeparator(InfoLevel):
     len_header: int
     code: str = "Q005"
 
@@ -1703,7 +1660,7 @@ class AfterFirstRunResultError(ErrorLevel):
 class EndOfRunSummary(InfoLevel):
     num_errors: int
     num_warnings: int
-    keyboard_interrupt: bool = False
+    keyboard_interrupt: bool
     code: str = "Z030"
 
     def message(self) -> str:
@@ -1726,7 +1683,6 @@ class PrintStartLine(InfoLevel, NodeInfo):
     description: str
     index: int
     total: int
-    report_node_data: ParsedModelNode
     code: str = "Q033"
 
     def message(self) -> str:
@@ -1744,8 +1700,6 @@ class PrintHookStartLine(InfoLevel, NodeInfo):
     statement: str
     index: int
     total: int
-    truncate: bool
-    report_node_data: Any  # TODO: resolve ParsedHookNode circular import
     code: str = "Q032"
 
     def message(self) -> str:
@@ -1754,7 +1708,7 @@ class PrintHookStartLine(InfoLevel, NodeInfo):
                                         status='RUN',
                                         index=self.index,
                                         total=self.total,
-                                        truncate=self.truncate)
+                                        truncate=True)
 
 
 @dataclass
@@ -1764,8 +1718,6 @@ class PrintHookEndLine(InfoLevel, NodeInfo):
     index: int
     total: int
     execution_time: int
-    truncate: bool
-    report_node_data: Any  # TODO: resolve ParsedHookNode circular import
     code: str = "Q007"
 
     def message(self) -> str:
@@ -1775,7 +1727,7 @@ class PrintHookEndLine(InfoLevel, NodeInfo):
                                         index=self.index,
                                         total=self.total,
                                         execution_time=self.execution_time,
-                                        truncate=self.truncate)
+                                        truncate=True)
 
 
 @dataclass
@@ -1785,7 +1737,6 @@ class SkippingDetails(InfoLevel, NodeInfo):
     node_name: str
     index: int
     total: int
-    report_node_data: ParsedModelNode
     code: str = "Q034"
 
     def message(self) -> str:
@@ -1805,7 +1756,6 @@ class PrintErrorTestResult(ErrorLevel, NodeInfo):
     index: int
     num_models: int
     execution_time: int
-    report_node_data: ParsedModelNode
     code: str = "Q008"
 
     def message(self) -> str:
@@ -1824,7 +1774,6 @@ class PrintPassTestResult(InfoLevel, NodeInfo):
     index: int
     num_models: int
     execution_time: int
-    report_node_data: ParsedModelNode
     code: str = "Q009"
 
     def message(self) -> str:
@@ -1843,8 +1792,7 @@ class PrintWarnTestResult(WarnLevel, NodeInfo):
     index: int
     num_models: int
     execution_time: int
-    failures: List[str]
-    report_node_data: ParsedModelNode
+    failures: int
     code: str = "Q010"
 
     def message(self) -> str:
@@ -1863,8 +1811,7 @@ class PrintFailureTestResult(ErrorLevel, NodeInfo):
     index: int
     num_models: int
     execution_time: int
-    failures: List[str]
-    report_node_data: ParsedModelNode
+    failures: int
     code: str = "Q011"
 
     def message(self) -> str:
@@ -1900,7 +1847,6 @@ class PrintModelErrorResultLine(ErrorLevel, NodeInfo):
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedModelNode
     code: str = "Q035"
 
     def message(self) -> str:
@@ -1920,7 +1866,6 @@ class PrintModelResultLine(InfoLevel, NodeInfo):
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedModelNode
     code: str = "Q012"
 
     def message(self) -> str:
@@ -1937,11 +1882,10 @@ class PrintModelResultLine(InfoLevel, NodeInfo):
 class PrintSnapshotErrorResultLine(ErrorLevel, NodeInfo):
     status: str
     description: str
-    cfg: Dict
+    cfg: Dict[str, Any]
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedModelNode
     code: str = "Q013"
 
     def message(self) -> str:
@@ -1958,11 +1902,10 @@ class PrintSnapshotErrorResultLine(ErrorLevel, NodeInfo):
 class PrintSnapshotResultLine(InfoLevel, NodeInfo):
     status: str
     description: str
-    cfg: Dict
+    cfg: Dict[str, Any]
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedModelNode
     code: str = "Q014"
 
     def message(self) -> str:
@@ -1983,7 +1926,6 @@ class PrintSeedErrorResultLine(ErrorLevel, NodeInfo):
     execution_time: int
     schema: str
     relation: str
-    report_node_data: ParsedModelNode
     code: str = "Q015"
 
     def message(self) -> str:
@@ -2004,7 +1946,6 @@ class PrintSeedResultLine(InfoLevel, NodeInfo):
     execution_time: int
     schema: str
     relation: str
-    report_node_data: ParsedModelNode
     code: str = "Q016"
 
     def message(self) -> str:
@@ -2024,7 +1965,6 @@ class PrintHookEndErrorLine(ErrorLevel, NodeInfo):
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedHookNode
     code: str = "Q017"
 
     def message(self) -> str:
@@ -2044,7 +1984,6 @@ class PrintHookEndErrorStaleLine(ErrorLevel, NodeInfo):
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedHookNode
     code: str = "Q018"
 
     def message(self) -> str:
@@ -2064,7 +2003,6 @@ class PrintHookEndWarnLine(WarnLevel, NodeInfo):
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedHookNode
     code: str = "Q019"
 
     def message(self) -> str:
@@ -2084,7 +2022,6 @@ class PrintHookEndPassLine(InfoLevel, NodeInfo):
     index: int
     total: int
     execution_time: int
-    report_node_data: ParsedHookNode
     code: str = "Q020"
 
     def message(self) -> str:
@@ -2122,7 +2059,6 @@ class DefaultSelector(InfoLevel):
 @dataclass
 class NodeStart(DebugLevel, NodeInfo):
     unique_id: str
-    report_node_data: ParsedModelNode
     code: str = "Q023"
 
     def message(self) -> str:
@@ -2132,16 +2068,11 @@ class NodeStart(DebugLevel, NodeInfo):
 @dataclass
 class NodeFinished(DebugLevel, NodeInfo):
     unique_id: str
-    report_node_data: ParsedModelNode
-    run_result: RunResult
+    run_result: Dict[str, Any]
     code: str = "Q024"
 
     def message(self) -> str:
         return f"Finished running node {self.unique_id}"
-
-    @classmethod
-    def asdict(cls, data: list) -> dict:
-        return dict((k, str(v)) for k, v in data)
 
 
 @dataclass
@@ -2169,7 +2100,6 @@ class ConcurrencyLine(InfoLevel):
 @dataclass
 class NodeCompiling(DebugLevel, NodeInfo):
     unique_id: str
-    report_node_data: ParsedModelNode
     code: str = "Q030"
 
     def message(self) -> str:
@@ -2179,7 +2109,6 @@ class NodeCompiling(DebugLevel, NodeInfo):
 @dataclass
 class NodeExecuting(DebugLevel, NodeInfo):
     unique_id: str
-    report_node_data: ParsedModelNode
     code: str = "Q031"
 
     def message(self) -> str:
@@ -2444,11 +2373,11 @@ class EventBufferFull(WarnLevel):
 #
 # TODO remove these lines once we run mypy everywhere.
 if 1 == 0:
-    MainReportVersion('')
+    MainReportVersion(v='')
     MainKeyboardInterrupt()
-    MainEncounteredError(BaseException(''))
-    MainStackTrace('')
-    MainTrackingUserState('')
+    MainEncounteredError(e=BaseException(''))
+    MainStackTrace(stack_trace='')
+    MainTrackingUserState(user_state='')
     ParsingStart()
     ParsingCompiling()
     ParsingWritingManifest()
@@ -2472,7 +2401,7 @@ if 1 == 0:
     SystemStdOutMsg(bmsg=b"")
     SystemStdErrMsg(bmsg=b"")
     SelectorReportInvalidSelector(
-        selector_methods={"": ""}, spec_method="", raw_spec=""
+        valid_selectors="", spec_method="", raw_spec=""
     )
     MacroEventInfo(msg="")
     MacroEventDebug(msg="")
@@ -2490,9 +2419,12 @@ if 1 == 0:
     SQLQuery(conn_name="", sql="")
     SQLQueryStatus(status="", elapsed=0.1)
     SQLCommit(conn_name="")
-    ColTypeChange(orig_type="", new_type="", table="")
-    SchemaCreation(relation=_make_key(BaseRelation()))
-    SchemaDrop(relation=_make_key(BaseRelation()))
+    ColTypeChange(
+        orig_type="", new_type="",
+        table=_ReferenceKey(database="", schema="", identifier="")
+    )
+    SchemaCreation(relation=_ReferenceKey(database="", schema="", identifier=""))
+    SchemaDrop(relation=_ReferenceKey(database="", schema="", identifier=""))
     UncachedRelation(
         dep_key=_ReferenceKey(database="", schema="", identifier=""),
         ref_key=_ReferenceKey(database="", schema="", identifier=""),
@@ -2501,7 +2433,7 @@ if 1 == 0:
         dep_key=_ReferenceKey(database="", schema="", identifier=""),
         ref_key=_ReferenceKey(database="", schema="", identifier=""),
     )
-    AddRelation(relation=_make_key(_CachedRelation()))
+    AddRelation(relation=_ReferenceKey(database="", schema="", identifier=""))
     DropMissingRelation(relation=_ReferenceKey(database="", schema="", identifier=""))
     DropCascade(
         dropped=_ReferenceKey(database="", schema="", identifier=""),
@@ -2517,11 +2449,11 @@ if 1 == 0:
         old_key=_ReferenceKey(database="", schema="", identifier=""),
         new_key=_ReferenceKey(database="", schema="", identifier="")
     )
-    DumpBeforeAddGraph(dict())
-    DumpAfterAddGraph(dict())
-    DumpBeforeRenameSchema(dict())
-    DumpAfterRenameSchema(dict())
-    AdapterImportError(ModuleNotFoundError())
+    DumpBeforeAddGraph(dump={})
+    DumpAfterAddGraph(dump={})
+    DumpBeforeRenameSchema(dump={})
+    DumpAfterRenameSchema(dump={})
+    AdapterImportError(exc=Exception())
     PluginLoadError()
     SystemReportReturnCode(returncode=0)
     NewConnectionOpening(connection_state='')
@@ -2545,7 +2477,7 @@ if 1 == 0:
     PartialParsingFailedBecauseProfileChange()
     PartialParsingFailedBecauseNewProjectDependency()
     PartialParsingFailedBecauseHashChanged()
-    PartialParsingDeletedMetric('')
+    PartialParsingDeletedMetric(id='')
     ParsedFileLoadFailed(path='', exc=Exception(''))
     PartialParseSaveFileNotFound()
     StaticParserCausedJinjaRendering(path='')
@@ -2581,7 +2513,7 @@ if 1 == 0:
     ProfileHelpMessage()
     CatchableExceptionOnRun(exc=Exception(''))
     InternalExceptionOnRun(build_path='', exc=Exception(''))
-    GenericExceptionOnRun(build_path='', unique_id='', exc='')
+    GenericExceptionOnRun(build_path='', unique_id='', exc=Exception(''))
     NodeConnectionReleaseError(node_name='', exc=Exception(''))
     CheckCleanPath(path='')
     ConfirmCleanPath(path='')
@@ -2608,7 +2540,7 @@ if 1 == 0:
     ServingDocsAccessInfo(port='')
     ServingDocsExitInfo()
     SeedHeader(header='')
-    SeedHeaderSeperator(len_header=0)
+    SeedHeaderSeparator(len_header=0)
     RunResultWarning(resource_type='', node_name='', path='')
     RunResultFailure(resource_type='', node_name='', path='')
     StatsLine(stats={})
@@ -2619,13 +2551,12 @@ if 1 == 0:
     FirstRunResultError(msg='')
     AfterFirstRunResultError(msg='')
     EndOfRunSummary(num_errors=0, num_warnings=0, keyboard_interrupt=False)
-    PrintStartLine(description='', index=0, total=0, report_node_data=ParsedModelNode())
+    PrintStartLine(description='', index=0, total=0, node_info={})
     PrintHookStartLine(
         statement='',
         index=0,
         total=0,
-        truncate=False,
-        report_node_data=ParsedHookNode()
+        node_info={},
     )
     PrintHookEndLine(
         statement='',
@@ -2633,8 +2564,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        truncate=False,
-        report_node_data=ParsedHookNode()
+        node_info={},
     )
     SkippingDetails(
         resource_type='',
@@ -2642,37 +2572,37 @@ if 1 == 0:
         node_name='',
         index=0,
         total=0,
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintErrorTestResult(
         name='',
         index=0,
         num_models=0,
         execution_time=0,
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintPassTestResult(
         name='',
         index=0,
         num_models=0,
         execution_time=0,
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintWarnTestResult(
         name='',
         index=0,
         num_models=0,
         execution_time=0,
-        failures=[],
-        report_node_data=ParsedModelNode()
+        failures=0,
+        node_info={},
     )
     PrintFailureTestResult(
         name='',
         index=0,
         num_models=0,
         execution_time=0,
-        failures=[],
-        report_node_data=ParsedModelNode()
+        failures=0,
+        node_info={},
     )
     PrintSkipBecauseError(schema='', relation='', index=0, total=0)
     PrintModelErrorResultLine(
@@ -2681,7 +2611,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintModelResultLine(
         description='',
@@ -2689,7 +2619,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintSnapshotErrorResultLine(
         status='',
@@ -2698,7 +2628,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintSnapshotResultLine(
         status='',
@@ -2707,7 +2637,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintSeedErrorResultLine(
         status='',
@@ -2716,7 +2646,7 @@ if 1 == 0:
         execution_time=0,
         schema='',
         relation='',
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintSeedResultLine(
         status='',
@@ -2725,7 +2655,7 @@ if 1 == 0:
         execution_time=0,
         schema='',
         relation='',
-        report_node_data=ParsedModelNode()
+        node_info={},
     )
     PrintHookEndErrorLine(
         source_name='',
@@ -2733,7 +2663,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedHookNode()
+        node_info={},
     )
     PrintHookEndErrorStaleLine(
         source_name='',
@@ -2741,7 +2671,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedHookNode()
+        node_info={},
     )
     PrintHookEndWarnLine(
         source_name='',
@@ -2749,7 +2679,7 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedHookNode()
+        node_info={},
     )
     PrintHookEndPassLine(
         source_name='',
@@ -2757,16 +2687,16 @@ if 1 == 0:
         index=0,
         total=0,
         execution_time=0,
-        report_node_data=ParsedHookNode()
+        node_info={},
     )
     PrintCancelLine(conn_name='')
     DefaultSelector(name='')
-    NodeStart(report_node_data=ParsedModelNode(), unique_id='')
-    NodeFinished(report_node_data=ParsedModelNode(), unique_id='', run_result=RunResult())
+    NodeStart(node_info={}, unique_id='')
+    NodeFinished(node_info={}, unique_id='', run_result={})
     QueryCancelationUnsupported(type='')
     ConcurrencyLine(num_threads=0, target_name='')
-    NodeCompiling(report_node_data=ParsedModelNode(), unique_id='')
-    NodeExecuting(report_node_data=ParsedModelNode(), unique_id='')
+    NodeCompiling(node_info={}, unique_id='')
+    NodeExecuting(node_info={}, unique_id='')
     StarterProjectPath(dir='')
     ConfigFolderDirectory(dir='')
     NoSampleProfileFound(adapter='')
