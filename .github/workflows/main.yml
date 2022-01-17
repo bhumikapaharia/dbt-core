@@ -104,5 +104,5 @@ jobs:
               pip install tox && \
               pip --version && \
               tox --version && \
-              tox -e py38-unit && \
+              tox -e py38 && \
               deactivate'
