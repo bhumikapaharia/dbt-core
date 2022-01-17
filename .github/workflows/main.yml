@@ -100,7 +100,7 @@ jobs:
               python3 -m pip install virtualenv && python3 -m venv py38-venv && \
               source py38-venv/bin/activate && \
               ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && export DEBIAN_FRONTEND=noninteractive && apt-get install -y tzdata && dpkg-reconfigure --frontend noninteractive tzdata && \
-              pip install --user --upgrade pip && \
+              python -m pip install --upgrade pip && \
               pip install tox && \
               pip --version && \
               tox --version && \
