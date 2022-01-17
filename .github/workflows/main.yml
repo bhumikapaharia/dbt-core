@@ -36,38 +36,7 @@ defaults:
     shell: bash
 
 jobs:
-  code-quality:
-    name: ${{ matrix.toxenv }}
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        toxenv: [flake8, mypy]
-
-    env:
-      TOXENV: ${{ matrix.toxenv }}
-      PYTEST_ADDOPTS: "-v --color=yes"
-
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v2
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
-
-      - name: Install python dependencies
-        run: |
-          pip install --user --upgrade pip
-          pip install tox
-          pip --version
-          tox --version
-
-      - name: Run tox
-        run: tox
+  
 
   unit:
     name: unit test / python ${{ matrix.python-version }}
@@ -77,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [3.7, 3.8, 3.9]
+        python-version: [3.8]
 
     env:
       TOXENV: "unit"
@@ -115,93 +84,26 @@ jobs:
           name: unit_results_${{ matrix.python-version }}-${{ steps.date.outputs.date }}.csv
           path: unit_results.csv
 
-  build:
-    name: build packages
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@v2
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
-        with:
-          python-version: 3.8
-
-      - name: Install python dependencies
-        run: |
-          pip install --user --upgrade pip
-          pip install --upgrade setuptools wheel twine check-wheel-contents
-          pip --version
-
-      - name: Build distributions
-        run: ./scripts/build-dist.sh
-
-      - name: Show distributions
-        run: ls -lh dist/
-
-      - name: Check distribution descriptions
-        run: |
-          twine check dist/*
-
-      - name: Check wheel contents
-        run: |
-          check-wheel-contents dist/*.whl --ignore W007,W008
-
-      - uses: actions/upload-artifact@v2
-        with:
-          name: dist
-          path: dist/
-
-  test-build:
-    name: verify packages / python ${{ matrix.python-version }} / ${{ matrix.os }}
-
-    needs: build
-
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: [3.7, 3.8, 3.9]
-
-    steps:
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v2
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install python dependencies
-        run: |
-          pip install --user --upgrade pip
-          pip install --upgrade wheel
-          pip --version
-
-      - uses: actions/download-artifact@v2
-        with:
-          name: dist
-          path: dist/
-
-      - name: Show distributions
-        run: ls -lh dist/
-
-      - name: Install wheel distributions
-        run: |
-          find ./dist/*.whl -maxdepth 1 -type f | xargs pip install --force-reinstall --find-links=dist/
-
-      - name: Check wheel distributions
-        run: |
-          dbt --version
-
-      - name: Install source distributions
-        # ignore dbt-1.0.0, which intentionally raises an error when installed from source
-        run: |
-          find ./dist/dbt-[a-z]*.gz -maxdepth 1 -type f | xargs pip install --force-reinstall --find-links=dist/
-
-      - name: Check source distributions
-        run: |
-          dbt --version
+  armv64_job:
+      name: Build and Test for arm64
+      runs-on: ubuntu-20.04
+      steps:
+        - uses: actions/checkout@v2
+        - name: Set up QEMU
+          id: qemu
+          uses: docker/setup-qemu-action@v1
+        - name: Install and Run tests
+          run: |
+            docker run --rm -v ${{ github.workspace }}:/ws:rw --workdir=/ws \
+              arm64v8/ubuntu:20.04 \
+              bash -exc 'apt-get update && apt-get -y install python3 python3-pip python3-venv curl git && \
+              python3 -m pip install virtualenv && python3 -m venv py38-venv && \
+              source py38-venv/bin/activate && \
+              ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && export DEBIAN_FRONTEND=noninteractive && apt-get install -y tzdata && dpkg-reconfigure --frontend noninteractive tzdata && \
+              export PYTEST_ADDOPTS=-v --color=yes --csv unit_results.csv && \
+              pip install --user --upgrade pip && \
+              pip install tox && \
+              pip --version && \
+              tox --version && \
+              tox -e py38-unit && \
+              deactivate'
